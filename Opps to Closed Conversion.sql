@@ -1,0 +1,77 @@
+--Query for win rates from opps to closed-won. Dimensions such as vertical, product type, etc are included but commented out 
+
+--CTE for baseline data
+WITH opp_data as (
+SELECT OPPORTUNITY_NAME, 
+       OPPORTUNITY_ID,
+       STAGE,
+       OPPORTUNITY_AMOUNT as TAS,
+       CLOSE_DATE,
+       CREATED_DATE,
+       LEAD_SOURCE,
+       OPPORTUNITY_TYPE,
+       OPPORTUNITY_OWNER,
+       OPPORTUNITY_OWNER_ROLE,
+       OPPORTUNITY_OWNER_SEGMENT,
+       SALES_REPORTING_SEGMENT,
+       MAPPED_PRODUCT_TYPE,
+       PRODUCT_TYPE,
+       EXACT_AOV, 
+       LAUNCH_FLAG,
+       OPPORTUNITY_CAPTURE_DATE,
+       MERCHANT_ARI,
+       SIDE_BY_SIDE,
+       OPPORTUNITY_DISABLED_REASON,
+       ACCOUNT_NAME,
+       VERTICAL,
+       INDUSTRY,
+       ACCOUNT_TYPE,
+       ACCOUNT_ID,
+       ACCOUNT_SOURCE,
+       ACCOUNT_ECOMMERCE_PLATFORM,
+       SELF_SERVICE_FLAG,
+       SHOPIFY_FLAG,
+       NEW_MARKET_OPPORTUNITY_FLAG,
+       FISCAL_YEAR_CLOSE_DATE,
+       FISCAL_MONTH_CLOSE_DATE,
+       FISCAL_QUARTER_CLOSE_DATE,
+       FISCAL_QUARTER_NAME_CLOSE_DATE,
+       CONCAT(FISCAL_QUARTER_NAME_CLOSE_DATE,'-',FISCAL_YEAR_CLOSE_DATE) as FQ_Close,
+       CONCAT(FISCAL_QUARTER_NAME_CREATE_DATE,'-',FISCAL_YEAR_CREATE_DATE) as FQ_Create, 
+       FISCAL_YEAR_CREATE_DATE,
+       FISCAL_MONTH_CREATE_DATE, 
+       FISCAL_QUARTER_CREATE_DATE,
+       FISCAL_QUARTER_NAME_CREATE_DATE,
+       PRE_OPP_DAYS,
+       CREATED_DAYS,
+       DISCOVERY_DAYS,
+       PROD_DECISION_DAYS,
+       PROPOSAL_DAYS,
+       NEGOTIATION_DAYS,
+       EST_GMV, 
+       TOTAL_SALES_CYCLE_DAYS
+FROM PROD__WORKSPACE__US.SCRATCH_T_REVENUEOPS.V_OPEN_SALES_OPP_REV_GMV_PERFORMANCE v 
+WHERE v.OPPORTUNITY_SALES_FLAG=TRUE AND CREATED_DATE >= '2021-07-01' AND CREATED_DATE <= '2022-10-01')
+
+SELECT FQ_Create, 
+       --vertical,
+       --PRODUCT_TYPE,
+       --EXACT_AOV,
+       --INDUSTRY,
+       --LEAD_SOURCE
+       SUM(CASE WHEN STAGE IN ('Closed Won (Signed)','Closed Won') THEN 1 ELSE 0 END) as Won,
+       SUM(CASE WHEN STAGE IN ('Closed Lost') THEN 1 ELSE 0 END) as Lost,
+       SUM(CASE WHEN STAGE IN ('Pre Opportunity') THEN 1 ELSE 0 END) as Pre_Opportunity,
+       SUM(CASE WHEN STAGE IN ('Product Decision','Pre Opportunity','Discovery','Negotiation','Proposal','Verbal Commit') THEN 1 ELSE 0 END) as Open,
+       AVG(CASE WHEN STAGE IN ('Closed Won (Signed)','Closed Won') THEN TOTAL_SALES_CYCLE_DAYS ELSE NULL END) as Avg_cylce_closed_won,
+       AVG(CASE WHEN STAGE IN ('Closed Lost') THEN TOTAL_SALES_CYCLE_DAYS ELSE NULL END) as Avg_cylce_closed_lost,
+       SUM(CASE WHEN STAGE IN ('Closed Won (Signed)','Closed Won') THEN EST_GMV ELSE 0 END) as Won_Est_GMV,
+       SUM(CASE WHEN STAGE IN ('Closed Lost') THEN EST_GMV ELSE 0 END) as Lost_Est_GMV,
+       SUM(CASE WHEN STAGE IN ('Pre Opportunity') THEN EST_GMV ELSE 0 END) as Pre_Opportunity_Est_GMV,
+       SUM(CASE WHEN STAGE IN ('Product Decision','Pre Opportunity','Discovery','Negotiation','Proposal','Verbal Commit') THEN EST_GMV ELSE 0 END) as Open_Est_GMV,
+       Won / (Won + Lost) as Win_rate,
+       Won_Est_GMV / (Won_Est_GMV + Lost_Est_GMV) as Win_rate_Est_GMV
+FROM opp_data
+WHERE SELF_SERVICE_FLAG = FALSE --may want to timebound here based on close date days past created date
+GROUP BY 1
+ORDER BY 1
