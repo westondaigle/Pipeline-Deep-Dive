@@ -130,7 +130,6 @@ SELECT l.CREATEDDATE,
     WHERE l.AFFIRM_BUSINESS_UNIT__C='US' AND (l.LEADSOURCE IS NULL OR l.LEADSOURCE not ilike '%paybright%')
     AND l.CURRENT_PURCHASE_PATH__C ilike 'sales' and al.SELF_SERVICE__C=false--MSS Filter?
     AND l.EMAIL not ilike '%@affirm.com'
-    AND
 --------------
 --Lead Update Date
     AND l.CREATEDDATE>='2021-07-01'
