@@ -1,5 +1,4 @@
------------------------------------------------------------------------------------------------
--------Full Query
+------Full Query
 WITH ACTIVITY_UNION_BLOCK AS (
     SELECT * FROM (
     SELECT t.id ACTIVITY_ID,
@@ -65,12 +64,17 @@ ACTIVITIES AS (
     LEFT JOIN prod__us.DBT_ANALYTICS.DATE_DIM d on ac.DATE=d.DATE_KEY
     LEFT JOIN SALESFORCE.RAW_TESTING.CONTACT c on c.id=ac.WHOID
     LEFT JOIN SALESFORCE.RAW_TESTING.ACCOUNT a on a.id=c.ACCOUNTID
-    WHERE (OWNER_ROLE='BDA' OR (OWNER_PREVIOUS_ROLE='BDA' and DATE<=OWNER_PREVIOUS_ROLE_END_DATE))
+    WHERE (OWNER_ROLE='BDA' OR (OWNER_PREVIOUS_ROLE='BDA' and DATE<=OWNER_PREVIOUS_ROLE_END_DATE)
+    --Weston added lines below to include BDA and AE activity
+                            OR OWNER_ROLE='Account Executive' OR (OWNER_PREVIOUS_ROLE='Account Executive' and DATE <=OWNER_PREVIOUS_ROLE_END_DATE)
+                            OR OWNER_ROLE LIKE '%Sales Manager%' OR (OWNER_PREVIOUS_ROLE LIKE '%Sales Manager%' and DATE <=OWNER_PREVIOUS_ROLE_END_DATE)
+                            OR OWNER_ROLE='Head of Sales' OR (OWNER_PREVIOUS_ROLE='Head of Sales' and DATE <=OWNER_PREVIOUS_ROLE_END_DATE)
+                            OR OWNER_ROLE='BDA Manager' OR (OWNER_PREVIOUS_ROLE='BDA Manager' and DATE <=OWNER_PREVIOUS_ROLE_END_DATE))
     AND ACTIVITY_TYPE IN ('Linkedin','Outbound Call','Outbound Email')
     AND (SUBJECT IS NULL OR SUBJECT not ilike '%<<%' OR SUBJECT not ilike '%>>%')
 -----------
  --Activity Date
-      AND d.FISCAL_YEAR>2020 --ac.date>'2022-07-01'
+      AND ac.date>='2021-07-01' AND ac.date<'2022-10-01'--d.FISCAL_YEAR>2020
 ------------
     ),
 DISCOVERY_IDs AS (
@@ -82,8 +86,14 @@ DISCOVERY_IDs AS (
     LEFT JOIN SALESFORCE.RAW_TESTING.USER ut on t.OWNERID=ut.ID
     LEFT JOIN SALESFORCE.RAW_TESTING.USERROLE urt on urt.id=ut.USERROLEID
     WHERE (t.SUBJECT ilike '%Discovery call%' OR t.SUBJECT ilike '%Conference Meeting%' OR t.SUBJECT ilike '%In-Person Meeting%')
-    AND (urt.NAME='BDA' or urt.NAME ilike '%account executive%')
-    AND t.CREATEDDATE>='2021-07-01'
+    --Weston added or statements beyond account executive here
+    AND (urt.NAME='BDA' or urt.NAME ilike '%account executive%' or urt.name LIKE '%Sales Manager%' 
+         or urt.NAME = 'Head of Sales' or urt.NAME = 'BDA Manager')
+   
+---------------
+    --Discovery Date    
+    AND t.CREATEDDATE>='2021-07-01' AND t.createddate < '2022-10-01'
+----------------    
     ),
  LEADS AS (
 SELECT l.CREATEDDATE,
@@ -109,12 +119,16 @@ SELECT l.CREATEDDATE,
        --May want to move discoery id and opp conversion to the next opp one.....
        d.DISCOVERY_IDs DISCOVERY_IDS_LEAD,
        CASE WHEN v.OPPORTUNITY_ID IS NOT NULL THEN l.id END TOTAL_CONVERTED_OPP_LEAD_ID, --may be better way to link this (revisit)
+       CASE WHEN v.OPPORTUNITY_ID IS NOT NULL THEN /*l.id*/ v.OPPORTUNITY_ID END TOTAL_CONVERTED_OPP_OPP_ID, --may be better way to link this (revisit)
        CASE WHEN c.PASSED_THROUGH_SQL_STATUS__C=TRUE AND vao.OPPORTUNITY_ID /*AND c.PASSED_THROUGH_SQL_STATUS__C=TRUE*/ IS NOT NULL
-        AND (l.EMAIL not ilike 'yahoo' OR l.EMAIL not ilike 'aol' OR l.EMAIL not ilike 'gmail') THEN l.id END TOTAL_CONVERTED_ACC_OPP_LEAD_ID,
+        AND (l.EMAIL not ilike '%yahoo%' OR l.EMAIL not ilike '%aol%' OR l.EMAIL not ilike '%gmail%') THEN l.id END TOTAL_CONVERTED_ACC_OPP_LEAD_ID,
        v.OPPORTUNITY_ID as OPPORTUNITY_ID_LEAD_OPP,
-       vao.OPPORTUNITY_ID AS OPPORTUNITY_ID_LEAD_ACCOUNT,
+       --vao.OPPORTUNITY_ID AS OPPORTUNITY_ID_LEAD_ACCOUNT,
+       CASE WHEN c.PASSED_THROUGH_SQL_STATUS__C=TRUE AND vao.OPPORTUNITY_ID /*AND c.PASSED_THROUGH_SQL_STATUS__C=TRUE*/ IS NOT NULL
+        AND (l.EMAIL not ilike '%yahoo%' AND l.EMAIL not ilike '%aol%' AND l.EMAIL not ilike '%gmail%') THEN vao.OPPORTUNITY_ID END AS TOTAL_CONVERTED_ACC_OPP_ID,
        l.LEADSOURCE,
-       lm.LEAD_SOURCE_MAPPED
+       lm.LEAD_SOURCE_MAPPED,
+       vao.OPPORTUNITY_ID AS OPPORTUNITY_ID_LEAD_ACCOUNT
     FROM SALESFORCE.RAW_TESTING.LEAD l
     LEFT JOIN SALESFORCE.RAW_TESTING.CONTACT c on l.CONVERTEDCONTACTID=c.id
     LEFT JOIN SALESFORCE.RAW_TESTING.OPPORTUNITYCONTACTROLE oc on l.CONVERTEDCONTACTID=oc.CONTACTID
@@ -132,9 +146,10 @@ SELECT l.CREATEDDATE,
     AND l.EMAIL not ilike '%@affirm.com'
 --------------
 --Lead Update Date
-    AND l.CREATEDDATE>='2021-07-01'
+    AND l.CREATEDDATE>='2021-07-01' AND l.CREATEDDATE <'2022-10-01'
 --------------
-),
+)
+     ,
 DISCO_CALLS AS (
     --probably want to use activity date
 SELECT a.ACCOUNT_SEGMENT__C DISCO_ACCOUNT_SEGMENT,
@@ -144,6 +159,9 @@ SELECT a.ACCOUNT_SEGMENT__C DISCO_ACCOUNT_SEGMENT,
          t.CREATEDDATE DISCO_CREATE_DATE,
          v.OPPORTUNITY_ID DISCO_CREATED_OPP_ID,
          v.CREATED_DATE,
+         --added two lines here for AE and BDA tracibility
+         OWNER_NAME,
+         OWNER_ROLE,
        CASE WHEN ac.ACTIVITY_ID is not null then DISCOVERY_IDs END AS ACTIVITY_DISCO_IDS,
        CASE WHEN ac.ACTIVITY_ID is not null then ac.activity_account_id END AS ACTIVITY_DISCO_ACCOUNT_IDS,
        CASE WHEN ac.ACTIVITY_ID is not null then ac.activity_contact_id END AS ACTIVITY_DISCO_CONTACT_IDS
@@ -155,10 +173,23 @@ SELECT a.ACCOUNT_SEGMENT__C DISCO_ACCOUNT_SEGMENT,
     LEFT JOIN ACTIVITIES ac on c.id=ac.activity_contact_id
     LEFT JOIN PROD__WORKSPACE__US.SCRATCH_T_REVENUEOPS.V_OPEN_SALES_OPP_REV_GMV_PERFORMANCE v ON v.ACCOUNT_ID=a.id and v.CREATED_DATE>t.CREATEDDATE AND v.CREATED_DATE<DATEADD(month,6,t.CREATEDDATE) and v.OPPORTUNITY_SALES_FLAG=TRUE
     WHERE (t.SUBJECT ilike '%Discovery call%' OR t.SUBJECT ilike '%Conference Meeting%' OR t.SUBJECT ilike '%In-Person Meeting%')
-    AND (urt.NAME='BDA' or urt.NAME ilike '%account executive%')
+---Weston added here to account for other Sales POC's
+    AND (
+        (urt.NAME='BDA' or urt.NAME ilike '%account executive%') 
+         OR (ut.PREVIOUS_ROLE__C='Account Executive' AND t.CREATEDDATE<ut.PREVIOUS_ROLE_END_DATE__C)
+         OR (urt.NAME LIKE '%Sales Manager%')
+         OR (ut.PREVIOUS_ROLE__C LIKE '%Sales Manager' AND t.CREATEDDATE<ut.PREVIOUS_ROLE_END_DATE__C)
+         OR (urt.NAME = 'Account Executive')
+         OR (urt.NAME = 'Sales Manager')
+         OR (ut.PREVIOUS_ROLE__C='Sales Manager' AND t.CREATEDDATE<ut.PREVIOUS_ROLE_END_DATE__C)
+         OR (urt.NAME = 'Head of Sales')
+         OR (ut.PREVIOUS_ROLE__C='Head of Sales' AND t.CREATEDDATE<ut.PREVIOUS_ROLE_END_DATE__C)
+         OR (urt.NAME = 'BDA Manager')
+         OR (ut.PREVIOUS_ROLE__C='BDA Manager' AND t.CREATEDDATE<ut.PREVIOUS_ROLE_END_DATE__C)
+         )    
 ------------------------
 --Disco Call Created Date
-  AND t.CREATEDDATE>='2021-07-01'
+  AND t.CREATEDDATE>='2021-07-01' AND t.CREATEDDATE < '2022-10-01'
 ------------------------
     QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id,v.OPPORTUNITY_ID ORDER BY c.CREATEDDATE ASC)=1
 ),
@@ -185,7 +216,7 @@ OPPS AS (
     WHERE v.OPPORTUNITY_SALES_FLAG=TRUE AND
 ---------------------
     --opportunity created date
-    v.CREATED_DATE>='2021-07-01'
+    v.CREATED_DATE>='2021-07-01' AND v.CREATED_DATE < '2022-10-01'
 ---------------------
     )
      , COMBINED_TABLE AS (
@@ -206,7 +237,7 @@ SELECT coalesce(o.OPP_ACCOUNT_TAS,d.DISCO_ACCOUNT_TAS,l.MAPPED_LEAD_TAS) TAS_FOR
       a.ACTIVITY_ACCOUNT_SEGMENT,
      --a.ACTIVITY_DISCO_ACCOUNT_IDS,
        --a.ACTIVITY_DISCO_CONTACT_IDS,
-       lao.TOTAL_CONVERTED_ACC_OPP_LEAD_ID as TOTAL_CONVERTED_ACC_OPP_LEAD_IDs
+       lao.TOTAL_CONVERTED_ACC_OPP_ID as TOTAL_CONVERTED_ACC_OPP_LEAD_OPP_IDS
 FROM OPPS o
 FULL OUTER JOIN DISCO_CALLS d on o.CREATED_OPPS=d.DISCO_CREATED_OPP_ID
 FULL OUTER JOIN LEADS l on o.CREATED_OPPS=l.OPPORTUNITY_ID_LEAD_OPP
@@ -217,18 +248,18 @@ WHERE ACCOUNT_BASED_SEGMENT_RAW IN ('SMB', 'Key', 'Self-Service','Enterprise')
 AGG_TABLE AS (
  SELECT
     ACCOUNT_BASED_SEGMENT,
-    COUNT(DISTINCT c.activity_id) ALL_BDA_ACTIVITIES,
-    COUNT(DISTINCT c.activity_account_id) ALL_BDA_ACCOUNTS_REACHED,
-     COUNT(DISTINCT c.activity_contact_id) ALL_BDA_CONTACTS_REACHED,
-    COUNT(DISTINCT ACTIVITY_DISCO_ACCOUNT_IDS) ALL_BDA_ACCOUNT_WITH_DISCO,
-    COUNT(DISTINCT ACTIVITY_DISCO_CONTACT_IDs)  ALL_BDA_CONTACTS_WITH_DISCO,
+    COUNT(DISTINCT c.activity_id) ALL_ACTIVITIES,
+    COUNT(DISTINCT c.activity_account_id) ALL_ACCOUNTS_REACHED,
+     COUNT(DISTINCT c.activity_contact_id) ALL_CONTACTS_REACHED,
+    COUNT(DISTINCT ACTIVITY_DISCO_ACCOUNT_IDS) ALL_ACCOUNT_WITH_DISCO,
+    COUNT(DISTINCT ACTIVITY_DISCO_CONTACT_IDs)  ALL_CONTACTS_WITH_DISCO,
      COUNT(DISTINCT c.ELIGIBLE_LEAD_IDs) ALL_ELIGIBLE_LEADS,
      COUNT(DISTINCT c.MQL_LEAD_ID) ALL_MQL_LEADS,
      COUNT(DISTINCT c.SAL_LEAD_ID) ALL_SAL_LEADS,
      COUNT(DISTINCT c.SQL_LEAD_ID) ALL_SQL_LEADS,
      COUNT(DISTINCT c.DISCOVERY_IDS_LEAD) ALL_LEADS_TO_DISCO_CALL,
-     COUNT(DISTINCT c.TOTAL_CONVERTED_OPP_LEAD_ID) ALL_LEADS_TO_OPPS_ARTIFICIALLY_LOW,
-     COUNT(DISTINCT c.TOTAL_CONVERTED_ACC_OPP_LEAD_IDs) ALL_LEADS_TO_OPPS_ARTIFICIALLY_HIGH,
+     COUNT(DISTINCT c.TOTAL_CONVERTED_OPP_OPP_ID) ALL_LEADS_TO_OPPS_ARTIFICIALLY_LOW,
+     COUNT(DISTINCT c.TOTAL_CONVERTED_ACC_OPP_LEAD_OPP_IDS) ALL_LEADS_TO_OPPS_ARTIFICIALLY_HIGH,
      COUNT(DISTINCT DISCOVERY_IDs) ALL_DISCOs,
     -- COUNT(DISTINCT ACTIVITY_DISCO_IDS) ACTIVTY_DISCO_IDS,
      ALL_DISCOs-ALL_LEADS_TO_DISCO_CALL OUTBOUND_DISCOs,
